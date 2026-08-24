@@ -4,8 +4,15 @@
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 
-static struct gpio_desc *led_desc;
-static struct gpio_desc *button_desc;
+#define GPIO5 517
+#define GPIO6 518
+#define GPIO13 525
+#define GPIO19 531
+
+static struct gpio_desc *rc_car_forward;
+static struct gpio_desc *rc_car_reverse;
+static struct gpio_desc *rc_car_left;
+static struct gpio_desc *rc_car_right;
 
 static dev_t dev_num;        // new: holds allocated major+minor
 static struct cdev car_gpio_cdev;  // new: our device's cdev structure
@@ -26,20 +33,21 @@ static int car_gpio_release(struct inode *inode, struct file *file) {
 }
 
 static ssize_t car_gpio_read(struct file *file, char *buf, size_t count, loff_t *ptr) {
-    int raw = gpio_get_value(539);
-    int pressed = !raw;   // invert: 0 (grounded) means pressed, so report 1
-    char kbuf[2];
-    kbuf[0] = pressed + '0';
-    kbuf[1] = '\0';
+    char kbuf[5];
+    kbuf[0] = !gpiod_get_value(rc_car_forward) + '0';  // byte 0: forward
+    kbuf[1] = !gpiod_get_value(rc_car_reverse) + '0';      // byte 1: back
+    kbuf[2] = gpiod_get_value(rc_car_left) + '0';      // byte 2: left
+    kbuf[3] = gpiod_get_value(rc_car_right) + '0';     // byte 3: right
+    kbuf[4] = '\0';
 
-    if (copy_to_user(buf, kbuf, 2)) {
+    if (copy_to_user(buf, kbuf, 5)) {
         return -EFAULT;
     }
-    printk("car_gpio_read: successful. Read value -> %d\n", pressed);
-    return 2;
+    return 5;
 }
 
 static ssize_t car_gpio_write(struct file *file, const char *buf, size_t count, loff_t *ppos) {
+    /*
     char kbuf[2];
     if (copy_from_user(kbuf, buf, 1)) {
         return -EFAULT;
@@ -47,6 +55,8 @@ static ssize_t car_gpio_write(struct file *file, const char *buf, size_t count, 
     int value = kbuf[0] - '0';  // convert ASCII '0'/'1' to actual int 0/1
     gpiod_set_value(led_desc, value);
     return count;
+    */
+    return 0;
 }
 
 struct file_operations car_gpio_fops = {
@@ -82,21 +92,39 @@ static int __init car_gpio_init(void) {
     printk("Car GPIO: registered successfully, major=%d minor=%d\n",
             MAJOR(dev_num), MINOR(dev_num));
 
-    /* Initialize the GPIO pins for input and output */
-    led_desc = gpio_to_desc(529);
-    if (!led_desc) {
-        printk(KERN_ERR "Failed to get descriptor for GPIO17\n");
+    /* Initialize the GPIO pins 5,6,13,19 */
+    rc_car_forward = gpio_to_desc(GPIO6);
+    if (!rc_car_forward) {
+        printk(KERN_ERR "Failed to get descriptor for GPIO5\n");
         return -ENODEV;
     }
+    printk("Successfully initialized GPIO6");
 
-    button_desc = gpio_to_desc(539);
-    if (!button_desc) {
-        printk(KERN_ERR "Failed to get descriptor for GPIO27\n");
+    rc_car_reverse = gpio_to_desc(GPIO5);
+    if (!rc_car_reverse) {
+        printk(KERN_ERR "Failed to get descriptor for GPIO6\n");
         return -ENODEV;
     }
+    printk("Successfully initialized GPIO5");
 
-    gpiod_direction_output(led_desc, 0);
-    gpiod_direction_input(button_desc);
+    rc_car_left = gpio_to_desc(GPIO19);
+    if (!rc_car_left) {
+        printk(KERN_ERR "Failed to get descriptor for GPIO13\n");
+        return -ENODEV;
+    }
+    printk("Successfully initialized GPIO19");
+
+    rc_car_right = gpio_to_desc(GPIO13);
+    if (!rc_car_right) {
+        printk(KERN_ERR "Failed to get descriptor for GPIO19\n");
+        return -ENODEV;
+    }
+    printk("Successfully initialized GPIO13");
+
+    gpiod_direction_input(rc_car_forward);
+    gpiod_direction_input(rc_car_reverse);
+    gpiod_direction_input(rc_car_left);
+    gpiod_direction_input(rc_car_right);
     return 0;
 }
 
@@ -104,9 +132,10 @@ static int __init car_gpio_init(void) {
 static void __exit car_gpio_exit(void) {
     cdev_del(&car_gpio_cdev);
     unregister_chrdev_region(dev_num, 1);
-    gpio_set_value(17, 0);       // turn LED off cleanly on unload
-    gpio_free(17);
-    gpio_free(27);
+    gpio_free(GPIO5);
+    gpio_free(GPIO6);
+    gpio_free(GPIO13);
+    gpio_free(GPIO19);
     printk("Car GPIO Exit\n");
 }
 
